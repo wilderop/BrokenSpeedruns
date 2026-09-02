@@ -1,3 +1,12 @@
 # Command executed when a player finishes (dragon kill)
 # Placeholders: %player%
 finish-command: "give %player% diamond 1"
+
+# Optional network-wide message. Placeholders: %player% %time%
+# Empty string disables the BungeeCord/Velocity forward.
+finish-broadcast: ""
+
+# Hint shown a few seconds after joining the lobby (not during an active run)
+join-hint:
+  enabled: true
+  delay-ticks: 60

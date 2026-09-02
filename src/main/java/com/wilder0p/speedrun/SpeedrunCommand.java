@@ -5,10 +5,17 @@ import org.bukkit.OfflinePlayer;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
+import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Player;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.UUID;
 
-public class SpeedrunCommand implements CommandExecutor {
+public class SpeedrunCommand implements CommandExecutor, TabCompleter {
+    private static final List<String> SUBS = List.of("quit", "restart", "list", "top", "help");
+
     private final SpeedrunManager manager;
 
     public SpeedrunCommand(SpeedrunManager manager) {
@@ -27,24 +34,40 @@ public class SpeedrunCommand implements CommandExecutor {
             return true;
         }
 
-        return switch (args[0].toLowerCase()) {
-            case "quit", "leave" -> {
+        return switch (args[0].toLowerCase(Locale.ROOT)) {
+            case "quit", "leave", "stop", "exit" -> {
                 manager.quit(p);
                 yield true;
             }
-            case "list" -> {
+            case "restart", "reset" -> {
+                manager.restart(p);
+                yield true;
+            }
+            case "list", "running" -> {
                 showActiveRuns(p);
                 yield true;
             }
-            case "top" -> {
+            case "top", "pb", "leaderboard" -> {
                 showLeaderboard(p);
                 yield true;
             }
+            case "help", "?" -> {
+                manager.sendHelp(p);
+                yield true;
+            }
             default -> {
-                p.sendMessage("§cUsage: /speedrun [quit|list|top]");
+                p.sendMessage("§cUnknown subcommand.");
+                manager.sendHelp(p);
                 yield true;
             }
         };
+    }
+
+    @Override
+    public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
+        if (args.length != 1) return List.of();
+        String prefix = args[0].toLowerCase(Locale.ROOT);
+        return SUBS.stream().filter(s -> s.startsWith(prefix)).toList();
     }
 
     private void showActiveRuns(Player p) {
@@ -70,7 +93,7 @@ public class SpeedrunCommand implements CommandExecutor {
         }
 
         List<Map.Entry<UUID, Long>> sorted = new ArrayList<>(bests.entrySet());
-        sorted.sort(Comparator.comparingLong(Map.Entry::getValue));
+        sorted.sort(Map.Entry.comparingByValue());
 
         for (int i = 0; i < Math.min(10, sorted.size()); i++) {
             Map.Entry<UUID, Long> entry = sorted.get(i);

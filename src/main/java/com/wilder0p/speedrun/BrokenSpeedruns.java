@@ -13,11 +13,15 @@ public class BrokenSpeedruns extends JavaPlugin {
     public void onEnable() {
         instance = this;
         saveDefaultConfig();
+        getConfig().options().copyDefaults(true);
+        saveConfig();
 
         dataManager = new DataManager(this);
         manager = new SpeedrunManager(this, dataManager);
 
-        getCommand("speedrun").setExecutor(new SpeedrunCommand(manager));
+        SpeedrunCommand command = new SpeedrunCommand(manager);
+        getCommand("speedrun").setExecutor(command);
+        getCommand("speedrun").setTabCompleter(command);
         Bukkit.getPluginManager().registerEvents(new EventListener(manager), this);
 
         Bukkit.getServer().getMessenger().registerOutgoingPluginChannel(this, "BungeeCord");
@@ -25,7 +29,7 @@ public class BrokenSpeedruns extends JavaPlugin {
         dataManager.loadData();
         manager.loadActiveRuns();
 
-        getLogger().info("Broken Speedruns v1.0 enabled - Solo speedrun system ready!");
+        getLogger().info("Broken Speedruns v" + getPluginMeta().getVersion() + " enabled - Solo speedrun system ready!");
     }
 
     @Override

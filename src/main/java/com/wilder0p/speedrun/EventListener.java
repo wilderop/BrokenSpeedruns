@@ -8,6 +8,7 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDeathEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerPortalEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 
 public class EventListener implements Listener {
     private final SpeedrunManager manager;
@@ -34,7 +35,14 @@ public class EventListener implements Listener {
         if (run != null) {
             e.getPlayer().teleport(run.getOverworld().getSpawnLocation());
             manager.startScoreboard(e.getPlayer(), run);
+            return;
         }
+        manager.scheduleJoinHint(e.getPlayer());
+    }
+
+    @EventHandler
+    public void onQuit(PlayerQuitEvent e) {
+        manager.handleQuit(e.getPlayer());
     }
 
     @EventHandler
