@@ -1,0 +1,3 @@
+# Command executed when a player finishes (dragon kill)
+# Placeholders: %player%
+finish-command: "give %player% diamond 1"

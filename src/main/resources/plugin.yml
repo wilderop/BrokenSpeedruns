@@ -1,0 +1,8 @@
+name: BrokenSpeedruns
+version: 1.0
+main: com.wilder0p.speedrun.BrokenSpeedruns
+api-version: 1.21
+commands:
+  speedrun:
+    description: Start a speedrun or manage it
+    usage: /speedrun [quit|list|top]
