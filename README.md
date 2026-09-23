@@ -1,3 +1,6 @@
+<!-- azpbmd-live -->
+**Live:** not installed
+<!-- /azpbmd-live -->
 # Broken Speedruns
 
 Paper plugin that gives each player a **solo Any%** in isolated overworld/nether/end worlds. Kill the dragon to finish.
