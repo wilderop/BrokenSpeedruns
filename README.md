@@ -1,5 +1,7 @@
 <!-- azpbmd-live -->
-**Live:** not installed
+**Live:** lobby
+
+Loaded on the Montreal lobby as `bsr.jar` (BrokenSpeedruns 1.2.1).
 <!-- /azpbmd-live -->
 # Broken Speedruns
 
