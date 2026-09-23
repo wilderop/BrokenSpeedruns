@@ -10,3 +10,6 @@ finish-broadcast: ""
 join-hint:
   enabled: true
   delay-ticks: 60
+
+# Horror mode is implemented in this plugin (no extra jars).
+# It only runs inside that player's speedrun-* worlds.

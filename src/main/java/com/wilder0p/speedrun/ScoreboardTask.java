@@ -24,7 +24,8 @@ public class ScoreboardTask extends BukkitRunnable {
         this.manager = manager;
         this.data = d;
         board = Bukkit.getScoreboardManager().getNewScoreboard();
-        Objective obj = board.registerNewObjective("speedrun", Criteria.DUMMY, "§6§lBROKEN SPEEDRUN");
+        String title = inst.isHorror() ? "§4§lHORROR SPEEDRUN" : "§6§lBROKEN SPEEDRUN";
+        Objective obj = board.registerNewObjective("speedrun", Criteria.DUMMY, title);
         obj.setDisplaySlot(DisplaySlot.SIDEBAR);
 
         // Teams so the time string can change without leaking a new score line every second
@@ -50,7 +51,7 @@ public class ScoreboardTask extends BukkitRunnable {
         }
 
         timeTeam.setPrefix("Time: " + instance.getFormattedTime());
-        long pb = data.getPersonalBest(player.getUniqueId());
+        long pb = data.getPersonalBest(player.getUniqueId(), instance.getMode());
         pbTeam.setPrefix("PB: " + (pb == -1 ? "None" : formatPB(pb)));
     }
 

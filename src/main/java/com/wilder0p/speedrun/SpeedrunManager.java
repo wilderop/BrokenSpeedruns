@@ -13,12 +13,15 @@ import org.bukkit.Color;
 import org.bukkit.Difficulty;
 import org.bukkit.FireworkEffect;
 import org.bukkit.GameMode;
+import org.bukkit.GameRule;
 import org.bukkit.Location;
-import org.bukkit.Material;
+import org.bukkit.Statistic;
 import org.bukkit.World;
 import org.bukkit.WorldCreator;
+import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Firework;
 import org.bukkit.entity.Player;
+import org.bukkit.event.entity.CreatureSpawnEvent;
 import org.bukkit.event.player.PlayerPortalEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.FireworkMeta;
@@ -43,6 +46,9 @@ public class SpeedrunManager {
     private final Map<UUID, BukkitTask> hintTasks = new HashMap<>();
     private final Map<UUID, BukkitTask> boardTasks = new HashMap<>();
     private final Map<UUID, BukkitTask> autoEndTasks = new HashMap<>();
+    private final Map<UUID, HorrorHauntTask> horrorTasks = new HashMap<>();
+    private final Map<UUID, SpeedrunMode> preparingModes = new ConcurrentHashMap<>();
+    private final Set<UUID> allowModeChange = ConcurrentHashMap.newKeySet();
 
     public SpeedrunManager(BrokenSpeedruns plugin, DataManager dataManager) {
         this.plugin = plugin;
@@ -58,13 +64,22 @@ public class SpeedrunManager {
             if (ow == null || net == null || end == null) return;
 
             Player p = Bukkit.getPlayer(uuid);
-            ItemStack[] empty = new ItemStack[0];
-            GameMode gm = p != null ? p.getGameMode() : GameMode.SURVIVAL;
-            SpeedrunInstance inst = new SpeedrunInstance(uuid, ow, net, end, startTime, empty, gm);
+            DataManager.StashedLobby stash = dataManager.loadLobbyStash(uuid);
+            ItemStack[] saved = stash != null && stash.inventory() != null ? stash.inventory() : new ItemStack[0];
+            GameMode gm = stash != null ? stash.gameMode() : (p != null ? p.getGameMode() : GameMode.ADVENTURE);
+            SpeedrunMode mode = dataManager.getActiveMode(uuid);
+            SpeedrunInstance inst = new SpeedrunInstance(uuid, ow, net, end, startTime, saved, gm, mode);
+            if (mode == SpeedrunMode.HORROR) {
+                applyHorrorDefaults(ow);
+                applyHorrorDefaults(net);
+                applyHorrorDefaults(end);
+            }
             activeRuns.put(uuid, inst);
             if (p != null) {
                 p.teleport(ow.getSpawnLocation());
+                applyRunSurvival(p);
                 startScoreboard(p, inst);
+                if (mode == SpeedrunMode.HORROR) startHorror(p);
             }
         });
         cleanupOrphanWorlds();
@@ -74,16 +89,50 @@ public class SpeedrunManager {
         return preparing.contains(uuid) || activeRuns.containsKey(uuid);
     }
 
+    public boolean isInRun(UUID uuid) {
+        return activeRuns.containsKey(uuid);
+    }
+
+    public boolean isHorrorRun(UUID uuid) {
+        SpeedrunInstance run = activeRuns.get(uuid);
+        return run != null && run.isHorror();
+    }
+
+    public boolean isSpeedrunWorld(World world) {
+        return world != null && world.getName().startsWith("speedrun-");
+    }
+
+    public boolean isModeChangeAllowed(UUID uuid) {
+        return allowModeChange.contains(uuid);
+    }
+
+    public void applyRunSurvival(Player player) {
+        if (player.getGameMode() != GameMode.SURVIVAL) {
+            player.setGameMode(GameMode.SURVIVAL);
+        }
+    }
+
     public void startSpeedrun(Player player) {
+        startSpeedrun(player, SpeedrunMode.CLASSIC);
+    }
+
+    public void startSpeedrun(Player player, SpeedrunMode mode) {
         UUID id = player.getUniqueId();
         if (isBusy(id)) {
             player.sendMessage("§cYou already have a speedrun going. §e/speedrun quit §cto leave.");
             return;
         }
+        if (mode == null) mode = SpeedrunMode.CLASSIC;
 
         preparing.add(id);
+        preparingModes.put(id, mode);
         cancelHint(id);
-        player.sendMessage("§eGenerating a fresh overworld, nether, and end. Hang tight — you can still walk around.");
+        if (mode == SpeedrunMode.HORROR) {
+            player.sendMessage("§8§oThe night does not end. Something is already watching.");
+            player.sendMessage("§eGenerating a horror world. Hang tight — you can still walk around.");
+        } else {
+            player.sendMessage("§eGenerating a fresh overworld, nether, and end. Hang tight — you can still walk around.");
+        }
 
         long seed = ThreadLocalRandom.current().nextLong();
         String base = "speedrun-" + id;
@@ -123,7 +172,7 @@ public class SpeedrunManager {
                                 cancel();
                                 return;
                             }
-                            beginRun(player, ow, nether, end);
+                            beginRun(player, ow, nether, end, preparingModes.getOrDefault(id, SpeedrunMode.CLASSIC));
                             cancel();
                         }
                     }
@@ -141,15 +190,20 @@ public class SpeedrunManager {
     }
 
     public void restart(Player player) {
+        SpeedrunMode mode = SpeedrunMode.CLASSIC;
+        SpeedrunInstance existing = activeRuns.get(player.getUniqueId());
+        if (existing != null) mode = existing.getMode();
+        else if (preparingModes.containsKey(player.getUniqueId())) mode = preparingModes.get(player.getUniqueId());
         if (isBusy(player.getUniqueId())) {
             quit(player);
         }
-        startSpeedrun(player);
+        startSpeedrun(player, mode);
     }
 
-    private void beginRun(Player player, World ow, World nether, World end) {
+    private void beginRun(Player player, World ow, World nether, World end, SpeedrunMode mode) {
         UUID id = player.getUniqueId();
         preparing.remove(id);
+        preparingModes.remove(id);
         prepareTasks.remove(id);
         if (!player.isOnline()) {
             unloadAndDelete(ow);
@@ -160,8 +214,7 @@ public class SpeedrunManager {
 
         ItemStack[] savedInv = player.getInventory().getContents().clone();
         GameMode savedGm = player.getGameMode();
-        player.getInventory().clear();
-        player.setGameMode(GameMode.SURVIVAL);
+        dataManager.saveLobbyStash(id, savedInv, savedGm);
         try {
             player.setHealth(20);
         } catch (IllegalArgumentException ignored) {
@@ -169,22 +222,59 @@ public class SpeedrunManager {
         }
         player.setFoodLevel(20);
         player.setSaturation(20);
+        player.setInvulnerable(false);
+        player.setAllowFlight(false);
+        player.setFlying(false);
+        // Lobby ExtraFlags/WG leave hidden Resistance+Regen (amplifier -1 = 255).
+        player.clearActivePotionEffects();
+
+        if (mode == SpeedrunMode.HORROR) {
+            applyHorrorDefaults(ow);
+            applyHorrorDefaults(nether);
+            applyHorrorDefaults(end);
+            try {
+                player.setStatistic(Statistic.TIME_SINCE_REST, 72_000);
+            } catch (IllegalArgumentException ignored) {
+                // statistic missing on some clients
+            }
+        }
 
         SpeedrunInstance inst = new SpeedrunInstance(
-                id, ow, nether, end, System.currentTimeMillis(), savedInv, savedGm);
+                id, ow, nether, end, System.currentTimeMillis(), savedInv, savedGm, mode);
+        // Register before teleport so WorldGuard's lobby `game-mode: adventure`
+        // (and plot /gamemode adventure on-exit) cannot stick.
         activeRuns.put(id, inst);
-        dataManager.saveActiveRuns(getStartTimesMap());
+        persistActive();
 
-        ow.setDifficulty(Difficulty.HARD);
         Location spawn = ow.getSpawnLocation();
         ow.getChunkAt(spawn).load(true);
-        createStarterPortal(ow);
+        // Teleport first so lobby world playerdata is saved WITH the real inventory.
+        // Clearing before teleport wrote an empty lobby player.dat; a later join
+        // at hub spawn looked like a wipe if /speedrun quit never ran.
         player.teleport(spawn);
+        player.getInventory().clear();
+        applyRunSurvival(player);
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                if (player.isOnline() && activeRuns.containsKey(id)) {
+                    applyRunSurvival(player);
+                }
+            }
+        }.runTaskLater(plugin, 1L);
 
         startScoreboard(player, inst);
         start24HourAutoEnd(inst);
+        if (mode == SpeedrunMode.HORROR) {
+            startHorror(player);
+            spawnOpeningHostiles(player);
+        }
 
-        player.sendMessage("§a§lSpeedrun started! Kill the dragon to finish.");
+        if (mode == SpeedrunMode.HORROR) {
+            player.sendMessage("§4§lHorror speedrun started. Kill the dragon. Do not sleep.");
+        } else {
+            player.sendMessage("§a§lSpeedrun started! Kill the dragon to finish.");
+        }
         player.sendMessage("§7Quit anytime with §e/speedrun quit§7. Clock is running.");
     }
 
@@ -197,7 +287,106 @@ public class SpeedrunManager {
         wc.generateStructures(true);
         // Creating three dimensions on the command thread used to trip Paper's watchdog
         wc.keepSpawnLoaded(TriState.FALSE);
-        return wc.createWorld();
+        World world = wc.createWorld();
+        if (world != null) {
+            applyVanillaDefaults(world);
+        }
+        return world;
+    }
+
+    /**
+     * Lobby server.properties has spawn-monsters/animals/npcs off, pvp off, and the
+     * lobby world uses non-vanilla gamerules (doMobSpawning false, drowningDamage
+     * false, doFireTick false, keepInventory true). New worlds inherit those.
+     */
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private void applyVanillaDefaults(World world) {
+        world.setDifficulty(Difficulty.NORMAL);
+        world.setPVP(true);
+        world.setSpawnFlags(true, true);
+        world.setHardcore(false);
+
+        for (GameRule rule : GameRule.values()) {
+            Object def = world.getGameRuleDefault(rule);
+            if (def != null) {
+                world.setGameRule(rule, def);
+            }
+        }
+    }
+
+    private void applyHorrorDefaults(World world) {
+        applyVanillaDefaults(world);
+        world.setDifficulty(Difficulty.HARD);
+        world.setGameRule(GameRule.DO_DAYLIGHT_CYCLE, false);
+        world.setGameRule(GameRule.DO_WEATHER_CYCLE, false);
+        world.setGameRule(GameRule.DO_INSOMNIA, true);
+        world.setGameRule(GameRule.MOB_GRIEFING, true);
+        world.setGameRule(GameRule.DO_MOB_SPAWNING, true);
+        forceMobSpawning(world);
+    }
+
+    /**
+     * Lobby server.properties has spawn-monsters/animals=false. That is a runtime
+     * chunk-map flag, not a gamerule, so it must be re-applied. Night surface
+     * light is 4 unless it is thundering (then 0), so thunder has to actually stick.
+     */
+    public void forceMobSpawning(World world) {
+        world.setGameRule(GameRule.DO_MOB_SPAWNING, true);
+        world.setSpawnFlags(true, true);
+        world.setDifficulty(world.getEnvironment() == World.Environment.NORMAL
+                && isHorrorWorld(world) ? Difficulty.HARD : world.getDifficulty());
+        if (world.getEnvironment() != World.Environment.NORMAL) return;
+        world.setTime(18_000L);
+        world.setClearWeatherDuration(0);
+        world.setStorm(true);
+        world.setThundering(true);
+        world.setWeatherDuration(20 * 60 * 60);
+        world.setThunderDuration(20 * 60 * 60);
+    }
+
+    private boolean isHorrorWorld(World world) {
+        if (world == null) return false;
+        String name = world.getName();
+        if (!name.startsWith("speedrun-")) return false;
+        try {
+            String uuidPart = name.replace("_nether", "").replace("_the_end", "")
+                    .substring("speedrun-".length());
+            SpeedrunInstance run = activeRuns.get(UUID.fromString(uuidPart));
+            return run != null && run.isHorror();
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+    }
+
+    private void spawnOpeningHostiles(Player player) {
+        World world = player.getWorld();
+        Location base = player.getLocation();
+        EntityType[] types = {EntityType.ZOMBIE, EntityType.SKELETON, EntityType.SPIDER, EntityType.CREEPER};
+        ThreadLocalRandom rng = ThreadLocalRandom.current();
+        for (int i = 0; i < 4; i++) {
+            double ang = rng.nextDouble() * Math.PI * 2;
+            Location at = base.clone().add(Math.cos(ang) * 16, 0, Math.sin(ang) * 16);
+            at.setY(world.getHighestBlockYAt(at) + 1);
+            world.spawnEntity(at, types[i % types.length], CreatureSpawnEvent.SpawnReason.NATURAL);
+        }
+        plugin.getLogger().info("Horror spawn flags monsters=" + world.getAllowMonsters()
+                + " animals=" + world.getAllowAnimals()
+                + " difficulty=" + world.getDifficulty()
+                + " time=" + world.getTime()
+                + " storm=" + world.hasStorm()
+                + " thunder=" + world.isThundering()
+                + " doMobSpawning=" + world.getGameRuleValue(GameRule.DO_MOB_SPAWNING));
+    }
+
+    public void startHorror(Player player) {
+        HorrorHauntTask old = horrorTasks.remove(player.getUniqueId());
+        if (old != null) {
+            old.cleanup();
+            old.cancel();
+        }
+        HorrorHauntTask task = new HorrorHauntTask(this, player);
+        task.runTaskTimer(plugin, 80L, 45L);
+        horrorTasks.put(player.getUniqueId(), task);
     }
 
     private World loadWorldIfPresent(String name, World.Environment env) {
@@ -206,14 +395,6 @@ public class SpeedrunManager {
         File folder = new File(Bukkit.getWorldContainer(), name);
         if (!folder.isDirectory()) return null;
         return createWorld(name, env, 0L);
-    }
-
-    private void createStarterPortal(World ow) {
-        Location portal = ow.getSpawnLocation().add(10, 1, 10);
-        for (int y = 0; y < 5; y++) {
-            ow.getBlockAt(portal.clone().add(0, y, 0)).setType(Material.OBSIDIAN);
-            ow.getBlockAt(portal.clone().add(3, y, 0)).setType(Material.OBSIDIAN);
-        }
     }
 
     public void handlePortal(PlayerPortalEvent e) {
@@ -232,6 +413,7 @@ public class SpeedrunManager {
 
         dest.getWorld().getChunkAt(dest).load(true);
         e.getPlayer().teleport(dest);
+        applyRunSurvival(e.getPlayer());
     }
 
     private Location calculateScaled(Location from, World to) {
@@ -257,7 +439,7 @@ public class SpeedrunManager {
         restorePlayer(p, run);
         p.teleport(lobbySpawn(p));
         cleanupWorlds(run);
-        dataManager.saveActiveRuns(getStartTimesMap());
+        persistActive();
         p.sendMessage("§cSpeedrun quit.");
     }
 
@@ -268,10 +450,10 @@ public class SpeedrunManager {
         cancelRunTasks(p.getUniqueId());
 
         long time = run.getTimeMillis();
-        long pb = plugin.getDataManager().getPersonalBest(p.getUniqueId());
+        long pb = plugin.getDataManager().getPersonalBest(p.getUniqueId(), run.getMode());
         boolean newPB = pb == -1 || time < pb;
 
-        if (newPB) plugin.getDataManager().setPersonalBest(p.getUniqueId(), time);
+        if (newPB) plugin.getDataManager().setPersonalBest(p.getUniqueId(), time, run.getMode());
 
         String formatted = run.getFormattedTime();
         restorePlayer(p, run);
@@ -293,16 +475,37 @@ public class SpeedrunManager {
                 .replace("%player%", p.getName());
         if (!cmd.isBlank()) Bukkit.dispatchCommand(Bukkit.getConsoleSender(), cmd);
 
-        p.sendMessage("§6§lSpeedrun finished in " + formatted + (newPB ? " §a§l(PB!)" : ""));
+        String label = run.isHorror() ? "§4Horror speedrun" : "§6§lSpeedrun";
+        p.sendMessage(label + " finished in " + formatted + (newPB ? " §a§l(PB!)" : ""));
 
         cleanupWorlds(run);
-        dataManager.saveActiveRuns(getStartTimesMap());
+        persistActive();
     }
 
     private void restorePlayer(Player p, SpeedrunInstance run) {
-        p.getInventory().setContents(run.getSavedInventory());
-        p.setGameMode(run.getSavedGameMode());
+        ItemStack[] inv = run.getSavedInventory();
+        if (inv == null || inv.length == 0) {
+            DataManager.StashedLobby stash = dataManager.loadLobbyStash(p.getUniqueId());
+            if (stash != null && stash.inventory() != null && stash.inventory().length > 0) {
+                inv = stash.inventory();
+            }
+        }
+        if (inv != null && inv.length > 0) {
+            p.getInventory().setContents(inv);
+        }
+        GameMode gm = run.getSavedGameMode();
+        DataManager.StashedLobby stash = dataManager.loadLobbyStash(p.getUniqueId());
+        if (stash != null && stash.gameMode() != null) {
+            gm = stash.gameMode();
+        }
+        allowModeChange.add(p.getUniqueId());
+        try {
+            p.setGameMode(gm);
+        } finally {
+            allowModeChange.remove(p.getUniqueId());
+        }
         p.setScoreboard(Bukkit.getScoreboardManager().getMainScoreboard());
+        dataManager.deleteLobbyStash(p.getUniqueId());
     }
 
     private Location lobbySpawn(Player p) {
@@ -344,6 +547,7 @@ public class SpeedrunManager {
 
     private void abortPrepare(UUID id, String base) {
         preparing.remove(id);
+        preparingModes.remove(id);
         BukkitTask t = prepareTasks.remove(id);
         if (t != null) t.cancel();
         wipeWorld(base);
@@ -430,6 +634,17 @@ public class SpeedrunManager {
     private void cancelRunTasks(UUID id) {
         cancelTask(boardTasks, id);
         cancelTask(autoEndTasks, id);
+        HorrorHauntTask horror = horrorTasks.remove(id);
+        if (horror != null) {
+            horror.cleanup();
+            horror.cancel();
+        }
+    }
+
+    private void persistActive() {
+        Map<UUID, SpeedrunMode> modes = new HashMap<>();
+        activeRuns.forEach((k, v) -> modes.put(k, v.getMode()));
+        dataManager.saveActiveRuns(getStartTimesMap(), modes);
     }
 
     private void cancelTask(Map<UUID, BukkitTask> map, UUID id) {
@@ -479,10 +694,17 @@ public class SpeedrunManager {
                 .decorate(TextDecoration.BOLD)
                 .clickEvent(ClickEvent.runCommand("/speedrun"))
                 .hoverEvent(HoverEvent.showText(Component.text("Click to start a solo Any% run")));
+        Component horror = Component.text("/speedrun start horror")
+                .color(NamedTextColor.DARK_RED)
+                .decorate(TextDecoration.BOLD)
+                .clickEvent(ClickEvent.runCommand("/speedrun start horror"))
+                .hoverEvent(HoverEvent.showText(Component.text("Always night. Something watches.")));
         p.sendMessage(Component.text("Click ")
                 .color(NamedTextColor.GRAY)
                 .append(start)
-                .append(Component.text(" or type it to start.").color(NamedTextColor.GRAY)));
+                .append(Component.text(" or ").color(NamedTextColor.GRAY))
+                .append(horror)
+                .append(Component.text(".").color(NamedTextColor.GRAY)));
         sendHelp(p);
         p.sendMessage(Component.empty());
     }
@@ -490,12 +712,16 @@ public class SpeedrunManager {
     public void sendHelp(Player p) {
         p.sendMessage(Component.text("  /speedrun").color(NamedTextColor.YELLOW)
                 .append(Component.text(" \u2014 start a solo Any%").color(NamedTextColor.GRAY)));
+        p.sendMessage(Component.text("  /speedrun start horror").color(NamedTextColor.DARK_RED)
+                .append(Component.text(" \u2014 always night, stalkers, no sleep").color(NamedTextColor.GRAY)));
         p.sendMessage(Component.text("  /speedrun quit").color(NamedTextColor.YELLOW)
                 .append(Component.text(" \u2014 leave and return to lobby").color(NamedTextColor.GRAY)));
         p.sendMessage(Component.text("  /speedrun restart").color(NamedTextColor.YELLOW)
                 .append(Component.text(" \u2014 scrap this seed and roll a new one").color(NamedTextColor.GRAY)));
         p.sendMessage(Component.text("  /speedrun top").color(NamedTextColor.YELLOW)
-                .append(Component.text(" \u2014 fastest times").color(NamedTextColor.GRAY)));
+                .append(Component.text(" \u2014 fastest classic times").color(NamedTextColor.GRAY)));
+        p.sendMessage(Component.text("  /speedrun top horror").color(NamedTextColor.YELLOW)
+                .append(Component.text(" \u2014 fastest horror times").color(NamedTextColor.GRAY)));
         p.sendMessage(Component.text("  /speedrun list").color(NamedTextColor.YELLOW)
                 .append(Component.text(" \u2014 who is running right now").color(NamedTextColor.GRAY)));
     }
@@ -526,15 +752,30 @@ public class SpeedrunManager {
     }
 
     public void shutdown() {
+        activeRuns.forEach((id, run) ->
+                dataManager.saveLobbyStash(id, run.getSavedInventory(), run.getSavedGameMode()));
+        persistActive();
+        for (Player p : Bukkit.getOnlinePlayers()) {
+            SpeedrunInstance run = activeRuns.get(p.getUniqueId());
+            if (run == null) continue;
+            restorePlayer(p, run);
+            p.teleport(lobbySpawn(p));
+        }
         for (BukkitTask t : prepareTasks.values()) t.cancel();
         for (BukkitTask t : hintTasks.values()) t.cancel();
         for (BukkitTask t : boardTasks.values()) t.cancel();
         for (BukkitTask t : autoEndTasks.values()) t.cancel();
+        for (HorrorHauntTask t : horrorTasks.values()) {
+            t.cleanup();
+            t.cancel();
+        }
         prepareTasks.clear();
         hintTasks.clear();
         boardTasks.clear();
         autoEndTasks.clear();
+        horrorTasks.clear();
         preparing.clear();
+        preparingModes.clear();
         activeRuns.clear();
     }
 

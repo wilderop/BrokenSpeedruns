@@ -14,7 +14,8 @@ import java.util.Map;
 import java.util.UUID;
 
 public class SpeedrunCommand implements CommandExecutor, TabCompleter {
-    private static final List<String> SUBS = List.of("quit", "restart", "list", "top", "help");
+    private static final List<String> SUBS = List.of("start", "quit", "restart", "list", "top", "help", "horror");
+    private static final List<String> MODES = List.of("classic", "horror");
 
     private final SpeedrunManager manager;
 
@@ -30,11 +31,32 @@ public class SpeedrunCommand implements CommandExecutor, TabCompleter {
         }
 
         if (args.length == 0) {
-            manager.startSpeedrun(p);
+            manager.startSpeedrun(p, SpeedrunMode.CLASSIC);
             return true;
         }
 
         return switch (args[0].toLowerCase(Locale.ROOT)) {
+            case "start" -> {
+                SpeedrunMode mode = SpeedrunMode.CLASSIC;
+                if (args.length >= 2) {
+                    SpeedrunMode parsed = SpeedrunMode.fromArg(args[1]);
+                    if (parsed == null) {
+                        p.sendMessage("§cUnknown mode. Try §eclassic §cor §ehorror§c.");
+                        yield true;
+                    }
+                    mode = parsed;
+                }
+                manager.startSpeedrun(p, mode);
+                yield true;
+            }
+            case "horror" -> {
+                manager.startSpeedrun(p, SpeedrunMode.HORROR);
+                yield true;
+            }
+            case "classic" -> {
+                manager.startSpeedrun(p, SpeedrunMode.CLASSIC);
+                yield true;
+            }
             case "quit", "leave", "stop", "exit" -> {
                 manager.quit(p);
                 yield true;
@@ -48,7 +70,12 @@ public class SpeedrunCommand implements CommandExecutor, TabCompleter {
                 yield true;
             }
             case "top", "pb", "leaderboard" -> {
-                showLeaderboard(p);
+                SpeedrunMode board = SpeedrunMode.CLASSIC;
+                if (args.length >= 2) {
+                    SpeedrunMode parsed = SpeedrunMode.fromArg(args[1]);
+                    if (parsed != null) board = parsed;
+                }
+                showLeaderboard(p, board);
                 yield true;
             }
             case "help", "?" -> {
@@ -65,9 +92,14 @@ public class SpeedrunCommand implements CommandExecutor, TabCompleter {
 
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
-        if (args.length != 1) return List.of();
-        String prefix = args[0].toLowerCase(Locale.ROOT);
-        return SUBS.stream().filter(s -> s.startsWith(prefix)).toList();
+        String prefix = args[args.length - 1].toLowerCase(Locale.ROOT);
+        if (args.length == 1) {
+            return SUBS.stream().filter(s -> s.startsWith(prefix)).toList();
+        }
+        if (args.length == 2 && (args[0].equalsIgnoreCase("start") || args[0].equalsIgnoreCase("top"))) {
+            return MODES.stream().filter(s -> s.startsWith(prefix)).toList();
+        }
+        return List.of();
     }
 
     private void showActiveRuns(Player p) {
@@ -79,14 +111,14 @@ public class SpeedrunCommand implements CommandExecutor, TabCompleter {
         manager.getActiveRuns().forEach((uuid, run) -> {
             OfflinePlayer op = Bukkit.getOfflinePlayer(uuid);
             String name = op.getName() != null ? op.getName() : "Unknown";
-            p.sendMessage(" §7• " + name + " §8— " + run.getFormattedTime());
+            p.sendMessage(" §7• " + name + (run.isHorror() ? " §8[horror]" : "") + " §8— " + run.getFormattedTime());
         });
     }
 
-    private void showLeaderboard(Player p) {
-        p.sendMessage("§6§l=== Broken Speedruns Leaderboard (Top 10) ===");
+    private void showLeaderboard(Player p, SpeedrunMode mode) {
+        p.sendMessage("§6§l=== Broken Speedruns " + mode.display() + " (Top 10) ===");
 
-        Map<UUID, Long> bests = BrokenSpeedruns.getInstance().getDataManager().getPersonalBestsForDisplay();
+        Map<UUID, Long> bests = BrokenSpeedruns.getInstance().getDataManager().getPersonalBestsForDisplay(mode);
         if (bests.isEmpty()) {
             p.sendMessage("§7No completed speedruns yet. Be the first!");
             return;

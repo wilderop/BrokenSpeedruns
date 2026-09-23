@@ -7,7 +7,7 @@ Built for the lobby on [A Zombie Pigman Broke My Door](https://dontplaythisserve
 ## Player flow
 
 1. On lobby join, a delayed hint challenges the player and lists the commands (clickable `/speedrun`)
-2. `/speedrun` generates a fresh world trio (staggered, spawn not kept loaded) then teleports them in
+2. `/speedrun` generates a fresh world trio (staggered, spawn not kept loaded) then teleports them in. Each world is reset to vanilla gamerules, Normal difficulty, PVP on, and animal/monster spawning on (the lobby server has those turned off).
 3. Sidebar shows live time and personal best
 4. Dragon death (or 24 hours elapsed) ends the run
 5. Inventory and gamemode are restored, worlds are deleted, personal best is saved if faster
@@ -17,11 +17,13 @@ Built for the lobby on [A Zombie Pigman Broke My Door](https://dontplaythisserve
 
 | Command | What it does |
 |---------|----------------|
-| `/speedrun` | Start a run |
+| `/speedrun` | Start a classic vanilla Any% |
+| `/speedrun start horror` | Always-night horror Any% (sounds, stalkers, no beds) |
 | `/speedrun quit` | Leave and restore inventory (`stop` / `leave` also work) |
-| `/speedrun restart` | Scrap the seed and roll a new one |
+| `/speedrun restart` | Scrap the seed and roll a new one (keeps classic/horror) |
 | `/speedrun list` | Who is running right now |
-| `/speedrun top` | Fastest 10 personal bests |
+| `/speedrun top` | Fastest 10 classic times |
+| `/speedrun top horror` | Fastest 10 horror times |
 | `/speedrun help` | Command list |
 
 ## Configuration (`config.yml`)
@@ -42,4 +44,4 @@ join-hint:
 mvn clean package
 ```
 
-The jar will be at `target/brokenspeedruns-1.1.0.jar`. Live lobby name is `bsr.jar`.
+The jar will be at `target/brokenspeedruns-1.2.1.jar`. Live lobby name is `bsr.jar`.

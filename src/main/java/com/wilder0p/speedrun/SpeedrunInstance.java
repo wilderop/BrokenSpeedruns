@@ -11,9 +11,16 @@ public class SpeedrunInstance {
     private final long startTime;
     private final ItemStack[] savedInventory;
     private final GameMode savedGameMode;
+    private final SpeedrunMode mode;
 
     public SpeedrunInstance(UUID playerUUID, World overworld, World nether, World theEnd,
                             long startTime, ItemStack[] savedInventory, GameMode savedGameMode) {
+        this(playerUUID, overworld, nether, theEnd, startTime, savedInventory, savedGameMode, SpeedrunMode.CLASSIC);
+    }
+
+    public SpeedrunInstance(UUID playerUUID, World overworld, World nether, World theEnd,
+                            long startTime, ItemStack[] savedInventory, GameMode savedGameMode,
+                            SpeedrunMode mode) {
         this.playerUUID = playerUUID;
         this.overworld = overworld;
         this.nether = nether;
@@ -21,6 +28,7 @@ public class SpeedrunInstance {
         this.startTime = startTime;
         this.savedInventory = savedInventory;
         this.savedGameMode = savedGameMode;
+        this.mode = mode == null ? SpeedrunMode.CLASSIC : mode;
     }
 
     public UUID getPlayerUUID() { return playerUUID; }
@@ -30,6 +38,8 @@ public class SpeedrunInstance {
     public long getStartTime() { return startTime; }
     public ItemStack[] getSavedInventory() { return savedInventory; }
     public GameMode getSavedGameMode() { return savedGameMode; }
+    public SpeedrunMode getMode() { return mode; }
+    public boolean isHorror() { return mode == SpeedrunMode.HORROR; }
 
     public String getFormattedTime() {
         long seconds = (System.currentTimeMillis() - startTime) / 1000;
